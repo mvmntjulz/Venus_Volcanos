@@ -10,25 +10,31 @@ from matplotlib import pylab as plt
 from skimage import exposure
 import scipy.misc
 
+from sklearn.model_selection import cross_val_score
+from sklearn.ensemble import AdaBoostClassifier
+import sklearn.cluster
+from sklearn.model_selection import KFold
+
 PATCHES = list()
 LABELS = list()
 HOG_PATCHES = list()
 
 
 def plot(ax, X, y):
-    ax.plot(X[y == 4, 0], X[y == 4, 1], "ko", alpha=0.2)
+    ax.plot(X[y == 4, 0], X[y == 4, 1], "ko", alpha=0.4)
     ax.plot(X[y == 3, 0], X[y == 3, 1], "go", alpha=0.4)
     ax.plot(X[y == 2, 0], X[y == 2, 1], "bo", alpha=0.4)
     ax.plot(X[y == 1, 0], X[y == 1, 1], "ro", alpha=0.4)
 
 
-
-def pca_knn(trn_X, tst_X, trn_y, tst_y):
+def pca_knn(trn_X, tst_X, trn_y, tst_y, do_plot=False):
     pca = sklearn.decomposition.KernelPCA(n_components=2)
     pca.fit(trn_X)
 
     trn_X_2 = pca.transform(trn_X)
-    plot(trn_X_2, trn_y)
+    if do_plot:
+        plot(plt, trn_X_2, trn_y)
+        plt.show()
 
     # Training phase
     knn = sklearn.neighbors.KNeighborsClassifier(n_neighbors=10)
@@ -36,56 +42,74 @@ def pca_knn(trn_X, tst_X, trn_y, tst_y):
 
     # Testing phase
     tst_X_2 = pca.transform(tst_X)
-    plt.figure()
-    plt.title("Train")
-    plot(trn_X_2, trn_y)
+    if do_plot:
+        plt.figure()
+        plt.title("Train")
+        plot(plt, trn_X_2, trn_y)
 
-    plt.figure()
-    plt.title("Test - Ground-Truth")
-    plot(tst_X_2, tst_y)
+        plt.figure()
+        plt.title("Test - Ground-Truth")
+        plot(plt, tst_X_2, tst_y)
 
     y_pred = knn.predict(pca.transform(tst_X))
 
-    plot(ax, tst_X_2, y_pred)
+    if do_plot:
+        plot(plt, tst_X_2, y_pred)
+        plt.show()
 
-    plt.show()
+    #print("PCA:")
+    #print(sklearn.metrics.confusion_matrix(tst_y, y_pred))
+    #print(sklearn.metrics.accuracy_score(tst_y, y_pred))
 
-    print("LDA:")
-    print(sklearn.metrics.confusion_matrix(tst_y, y_pred))
-    print(sklearn.metrics.accuracy_score(tst_y, y_pred))
+    acc = sklearn.metrics.accuracy_score(tst_y, y_pred)
+    prec = sklearn.metrics.precision_score(tst_y, y_pred, average='weighted')
+    f = sklearn.metrics.f1_score(tst_y, y_pred, average='weighted')
+
+    return pca, acc, prec, f
 
 
-def lda(trn_X, tst_X, trn_y, tst_y):
+def lda(trn_X, tst_X, trn_y, tst_y, do_plot=False):
     lda = sklearn.discriminant_analysis.LinearDiscriminantAnalysis()
     lda.fit(trn_X, trn_y)
 
     trn_X_2 = lda.transform(trn_X)
     tst_X_2 = lda.transform(tst_X)
 
-    fig = plt.figure()
-    ax1 = fig.add_subplot(131)
-    ax1.set_title("Train")
-    plot(ax1, trn_X_2, trn_y)
+    if do_plot:
+        fig = plt.figure()
+        ax1 = fig.add_subplot(131)
+        ax1.set_title("Train")
+        plot(ax1, trn_X_2, trn_y)
 
-    ax2 = fig.add_subplot(132)
-    ax2.set_title("Test - GT after lda.transform")
-    plot(ax2, tst_X_2, tst_y)
+        ax2 = fig.add_subplot(132)
+        ax2.set_title("Test - GT after lda.transform")
+        plot(ax2, tst_X_2, tst_y)
 
     y_pred = lda.predict(tst_X)
 
-    ax3 = fig.add_subplot(133)
-    ax3.set_title("Test - Post-Predict")
-    plot(ax3, tst_X_2, y_pred)
+    if do_plot:
+        ax3 = fig.add_subplot(133)
+        ax3.set_title("Test - Post-Predict")
+        plot(ax3, tst_X_2, y_pred)
 
-    plt.tight_layout()
-    plt.show()
+        plt.tight_layout()
+        plt.show()
 
-    print("LDA:")
     cm = sklearn.metrics.confusion_matrix(tst_y, y_pred)
     cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
     np.set_printoptions(precision=2)
-    print(cm)
-    print(sklearn.metrics.accuracy_score(tst_y, y_pred))
+
+    acc = sklearn.metrics.accuracy_score(tst_y, y_pred)
+    prec = sklearn.metrics.precision_score(tst_y, y_pred, average='weighted')
+    f = sklearn.metrics.f1_score(tst_y, y_pred, average='weighted')
+
+    #print("LDA:")
+    #print(cm)
+    #print("Acc:", acc)
+    #print("Prec:", prec)
+    #print("F-Score:", f)
+
+    return lda, acc, prec, f
 
 
 def reshape_data(X, y):
@@ -102,9 +126,9 @@ def load_data(balance=False):
     patches = np.load(os.path.join("data", "Patches", "patches.npy"))
 
     if balance:
-        ones = patches[labels == 1]
+        ones = patches[labels == (1 or 2)]
         twos = patches[labels == 2]
-        threes = patches[labels == 3]
+        threes = patches[labels == (3 or 4)]
         fours = patches[labels == 4]
 
         minimum = min(len(ones), len(twos), len(threes), len(fours))
@@ -114,7 +138,7 @@ def load_data(balance=False):
     return patches, labels
 
 
-def create_patches_for_image(i, patch_size=16, padding_size= 20):
+def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False):
     path_to_image = os.path.join("data", "Images", "img{}.sdt".format(i))
     path_to_ground_truth = os.path.join("data", "GroundTruths", "img{}.lxyr".format(i))
 
@@ -134,15 +158,25 @@ def create_patches_for_image(i, patch_size=16, padding_size= 20):
             patch = image[y_pos:y_pos + patch_size, x_pos:x_pos + patch_size]
             #plt.imshow(patch)
             #plt.show()
+
             global LABELS
-            LABELS.append(line[0])
+            if combine:
+                if line[0] == '1' or line[0] == '2':
+                    LABELS.append(1)
+                else:
+                    LABELS.append(int(line[0]))
+                    #LABELS.append(3)
+
+            else:
+                LABELS.append(int(line[0]))
+
             global PATCHES
             PATCHES.append(patch.ravel())
 
 
-def create_patches(patch_size=16, padding_size= 20):
+def create_patches(patch_size=16, padding_size= 20, combine=False):
     for image in range(134):
-        create_patches_for_image(image+1, patch_size, padding_size)
+        create_patches_for_image(image+1, patch_size, padding_size, combine)
 
     global LABELS
     LABELS = np.asarray(LABELS)
@@ -164,28 +198,69 @@ def create_hog_patches(X):
     return np.asarray(hog_fv)
 
 
+def adaboost(patches, labels):
+    clf = AdaBoostClassifier(n_estimators=1000)
+    scores = cross_val_score(clf, patches, labels)
+    print(scores.mean())
+
+
 if __name__ == "__main__":
 
-    # Parameters ========
+    # PARAMETERS ========
+
+    # Patches:
     patch_size = 16
     padding_size = 20
-    use_hog = False
-    mnist = False
+    combine = False
     balance = False
+    use_hog = False
+
+    # Other:
+    mnist = False
+    do_plot = False
+    n_splits = 10
+
     # ===================
 
-    create_patches(patch_size, padding_size)
+    create_patches(patch_size, padding_size, combine)
 
     if mnist:
         data = sklearn.datasets.load_digits()
-        patches, labels = data.data, data.target
+        X, y = data.data, data.target
     else:
-        patches, labels = load_data(balance)
-        patches = create_hog_patches(patches) if use_hog else patches
+        X, y = load_data(balance)
+        X = create_hog_patches(X) if use_hog else X
 
-    data = train_test_split(patches, labels, test_size=0.33, shuffle=True)
 
-    #pca_knn(*data)
-    lda(*data)
+    kf = KFold(n_splits=n_splits, shuffle=True)
+    global_acc = 0
+    global_prec = 0
+    global_f = 0
+
+    for train_index, test_index in kf.split(X):
+        X_train, X_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+
+        data = X_train, X_test, y_train, y_test
+        #LDA
+        model_lda, acc, prec, f = lda(*data, do_plot)
+
+        #PCA
+        #model_pca, acc, prec, f = pca_knn(*data, do_plot)
+
+        global_acc += acc
+        global_prec += prec
+        global_f += f
+
+    global_acc /= kf.get_n_splits(X)
+    global_prec /= kf.get_n_splits(X)
+    global_f /= kf.get_n_splits(X)
+
+    print("Acc:", global_acc)
+    print("Prec:", global_prec)
+    print("F-Score:", global_f)
+
+    #data = train_test_split(patches, labels, test_size=0.33, shuffle=True)
+    #adaboost(patches, labels)
 
 
