@@ -95,27 +95,26 @@ def reshape_data(X, y):
     return X, y
 
 
-def load_data():
+def load_data(balance=False):
     labels = np.load(os.path.join("data", "Patches", "labels.npy"))
     labels = np.asarray(labels, dtype=np.uint8)
 
     patches = np.load(os.path.join("data", "Patches", "patches.npy"))
 
-    ones = patches[labels == 1]
-    twos = patches[labels == 2]
-    threes = patches[labels == 3]
-    fours = patches[labels == 4]
+    if balance:
+        ones = patches[labels == 1]
+        twos = patches[labels == 2]
+        threes = patches[labels == 3]
+        fours = patches[labels == 4]
 
-    minimum = min(len(ones), len(twos), len(threes), len(fours))
-    labels = np.asarray([1 for x in range(minimum)] + [2 for x in range(minimum)] + [3 for x in range(minimum)] + [4 for x in range(minimum)])
-    patches = np.concatenate([ones[:minimum,:], twos[:minimum,:], threes[:minimum, :], fours[:minimum, :]])
+        minimum = min(len(ones), len(twos), len(threes), len(fours))
+        labels = np.asarray([1 for x in range(minimum)] + [2 for x in range(minimum)] + [3 for x in range(minimum)] + [4 for x in range(minimum)])
+        patches = np.concatenate([ones[:minimum,:], twos[:minimum,:], threes[:minimum, :], fours[:minimum, :]])
 
     return patches, labels
 
 
-def create_patches_for_image(i):
-    patch_size = 16
-    padding_size = 20
+def create_patches_for_image(i, patch_size=16, padding_size= 20):
     path_to_image = os.path.join("data", "Images", "img{}.sdt".format(i))
     path_to_ground_truth = os.path.join("data", "GroundTruths", "img{}.lxyr".format(i))
 
@@ -141,9 +140,9 @@ def create_patches_for_image(i):
             PATCHES.append(patch.ravel())
 
 
-def create_patches():
+def create_patches(patch_size=16, padding_size= 20):
     for image in range(134):
-        create_patches_for_image(image+1)
+        create_patches_for_image(image+1, patch_size, padding_size)
 
     global LABELS
     LABELS = np.asarray(LABELS)
@@ -166,16 +165,22 @@ def create_hog_patches(X):
 
 
 if __name__ == "__main__":
-    create_patches()
 
+    # Parameters ========
+    patch_size = 16
+    padding_size = 20
     use_hog = False
     mnist = False
+    balance = False
+    # ===================
+
+    create_patches(patch_size, padding_size)
 
     if mnist:
         data = sklearn.datasets.load_digits()
         patches, labels = data.data, data.target
     else:
-        patches, labels = load_data()
+        patches, labels = load_data(balance)
         patches = create_hog_patches(patches) if use_hog else patches
 
     data = train_test_split(patches, labels, test_size=0.33, shuffle=True)
