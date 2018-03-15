@@ -54,8 +54,7 @@ if __name__ == "__main__":
         ni[50:-50, 50:-50] = image
         image = ni
         image = exposure.equalize_hist(image)
-        image = denoise_tv_chambolle(image, multichannel=False)
-        image = daisy(image)
+        # image = denoise_tv_chambolle(image, multichannel=False)
 
         plt.imshow(image)
         plt.show()
