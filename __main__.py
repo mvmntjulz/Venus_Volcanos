@@ -9,12 +9,15 @@ from sklearn.model_selection import train_test_split
 from matplotlib import pylab as plt
 from skimage import exposure
 import scipy.misc
-
 from sklearn.model_selection import cross_val_score
 from sklearn.ensemble import AdaBoostClassifier
 import sklearn.cluster
 from sklearn.model_selection import KFold
+import copy
+import random
+from scipy.spatial import distance
 
+WINDOWS = list()
 PATCHES = list()
 LABELS = list()
 HOG_PATCHES = list()
@@ -23,12 +26,12 @@ HOG_PATCHES = list()
 def plot(ax, X, y):
     ax.plot(X[y == 4, 0], X[y == 4, 1], "ko", alpha=0.4)
     ax.plot(X[y == 3, 0], X[y == 3, 1], "go", alpha=0.4)
-    ax.plot(X[y == 2, 0], X[y == 2, 1], "bo", alpha=0.4)
+    #ax.plot(X[y == 2, 0], X[y == 2, 1], "bo", alpha=0.4)
     ax.plot(X[y == 1, 0], X[y == 1, 1], "ro", alpha=0.4)
 
 
 def pca_knn(trn_X, tst_X, trn_y, tst_y, do_plot=False):
-    pca = sklearn.decomposition.KernelPCA(n_components=2)
+    pca = sklearn.decomposition.PCA(n_components=2)
     pca.fit(trn_X)
 
     trn_X_2 = pca.transform(trn_X)
@@ -57,9 +60,9 @@ def pca_knn(trn_X, tst_X, trn_y, tst_y, do_plot=False):
         plot(plt, tst_X_2, y_pred)
         plt.show()
 
-    #print("PCA:")
-    #print(sklearn.metrics.confusion_matrix(tst_y, y_pred))
-    #print(sklearn.metrics.accuracy_score(tst_y, y_pred))
+    print("PCA:")
+    print(sklearn.metrics.confusion_matrix(tst_y, y_pred))
+    print(sklearn.metrics.accuracy_score(tst_y, y_pred))
 
     acc = sklearn.metrics.accuracy_score(tst_y, y_pred)
     prec = sklearn.metrics.precision_score(tst_y, y_pred, average='weighted')
@@ -102,12 +105,7 @@ def lda(trn_X, tst_X, trn_y, tst_y, do_plot=False):
     acc = sklearn.metrics.accuracy_score(tst_y, y_pred)
     prec = sklearn.metrics.precision_score(tst_y, y_pred, average='weighted')
     f = sklearn.metrics.f1_score(tst_y, y_pred, average='weighted')
-
-    #print("LDA:")
-    #print(cm)
-    #print("Acc:", acc)
-    #print("Prec:", prec)
-    #print("F-Score:", f)
+    print(cm)
 
     return lda, acc, prec, f
 
@@ -119,21 +117,23 @@ def reshape_data(X, y):
     return X, y
 
 
-def load_data(balance=False):
-    labels = np.load(os.path.join("data", "Patches", "labels.npy"))
+def load_data(balance=False, win=False):
+    if win:
+        labels = np.load(os.path.join("data", "Windows", "labels.npy"))
+        patches = np.load(os.path.join("data", "Windows", "windows.npy"))
+    else:
+        labels = np.load(os.path.join("data", "Patches", "labels.npy"))
+        patches = np.load(os.path.join("data", "Patches", "patches.npy"))
+
     labels = np.asarray(labels, dtype=np.uint8)
 
-    patches = np.load(os.path.join("data", "Patches", "patches.npy"))
-
     if balance:
-        ones = patches[labels == (1 or 2)]
-        twos = patches[labels == 2]
-        threes = patches[labels == (3 or 4)]
+        ones = patches[labels == 1]
         fours = patches[labels == 4]
 
-        minimum = min(len(ones), len(twos), len(threes), len(fours))
-        labels = np.asarray([1 for x in range(minimum)] + [2 for x in range(minimum)] + [3 for x in range(minimum)] + [4 for x in range(minimum)])
-        patches = np.concatenate([ones[:minimum,:], twos[:minimum,:], threes[:minimum, :], fours[:minimum, :]])
+        minimum = min(len(ones), len(fours))
+        labels = np.asarray([1 for x in range(minimum)] + [4 for x in range(minimum)])
+        patches = np.concatenate([ones[:minimum,:], fours[:minimum, :]])
 
     return patches, labels
 
@@ -160,21 +160,20 @@ def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False):
             #plt.show()
 
             global LABELS
+            global PATCHES
             if combine:
-                if line[0] == '1' or line[0] == '2':
+                if line_array[0] == '1' or line_array[0] == '2' or line_array[0] == '3':
                     LABELS.append(1)
-                else:
-                    LABELS.append(int(line[0]))
+                    PATCHES.append(patch.ravel())
+                #else:
+                    #LABELS.append(int(line[0]))
                     #LABELS.append(3)
-
+                    #PATCHES.append(patch.ravel())
             else:
                 LABELS.append(int(line[0]))
 
-            global PATCHES
-            PATCHES.append(patch.ravel())
 
-
-def create_patches(patch_size=16, padding_size= 20, combine=False):
+def create_patches(patch_size=16, padding_size= 20, combine=False, with_zeros=False):
     for image in range(134):
         create_patches_for_image(image+1, patch_size, padding_size, combine)
 
@@ -182,6 +181,11 @@ def create_patches(patch_size=16, padding_size= 20, combine=False):
     LABELS = np.asarray(LABELS)
     global PATCHES
     PATCHES = np.asarray(PATCHES)
+
+    if with_zeros:
+        zero_patches, zero_labels = find_zeros(patch_size, len(LABELS[LABELS == 1]), len(LABELS[LABELS == 4]))
+        PATCHES = np.vstack((PATCHES, zero_patches))
+        LABELS = np.concatenate((LABELS, zero_labels))
 
     np.save(os.path.join("data", "Patches", "patches.npy"), PATCHES)
     np.save(os.path.join("data", "Patches", "labels.npy"), LABELS)
@@ -198,39 +202,142 @@ def create_hog_patches(X):
     return np.asarray(hog_fv)
 
 
-def adaboost(patches, labels):
-    clf = AdaBoostClassifier(n_estimators=1000)
-    scores = cross_val_score(clf, patches, labels)
-    print(scores.mean())
+def get_label_for_coords(x, y, window_size, gt, image=None):
+    labels = list()
+
+    for line in gt:
+        line_array = line.split(" ")
+
+        # Volcano mid point inside window
+        if x < int(float(line_array[1])) < x + window_size and y < int(float(line_array[2])) < y + window_size:
+            labels.append(int(float(line_array[0])))
+            continue
+
+        # Window mid point within volcano radius
+        mid_point = (x + window_size//2, y + window_size//2)
+        volcan_point = (int(float(line_array[1])), int(float(line_array[2])))
+        if distance.euclidean(mid_point, volcan_point) < float(line_array[3]):
+            labels.append(int(float(line_array[0])))
+
+    if len(labels) == 1:
+        return labels[0]
+    elif len(labels) > 1:
+        return -1
+    elif len(labels) == 0:
+        return 0
+
+
+def create_windows():
+    windows = list()
+    windows_0 = list()
+    labels = list()
+    gt_list = list()
+
+    for i in range(10):
+        path_to_image = os.path.join("data", "Images", "img{}.sdt".format(i+1))
+        path_to_ground_truth = os.path.join("data", "GroundTruths", "img{}.lxyr".format(i+1))
+        image = np.fromfile(path_to_image, dtype='uint8')
+        image = image.reshape((1024, 1024))
+        window_size = 32
+
+        x_range = range(0, image.shape[1] - window_size + 1, window_size//2)
+        y_range = range(0, image.shape[0] - window_size + 1, window_size//2)
+
+        print(i)
+        print(len(windows), len(windows_0))
+
+        with open(path_to_ground_truth) as gt:
+            for line in gt:
+                gt_list.append(line)
+
+        for y_coord in y_range:
+            for x_coord in x_range:
+                window = image[y_coord:y_coord + window_size, x_coord:x_coord + window_size]
+                label = get_label_for_coords(x_coord, y_coord, window_size, gt_list, image)
+                if label > 0:
+                    labels.append(label)
+                    windows.append(window.ravel())
+                if label == 0:
+                    windows_0.append(window.ravel())
+
+    for i in range(len(labels)):
+        rand_index = random.randint(0, len(windows_0))
+
+        windows.append(windows_0[rand_index])
+        labels.append(0)
+
+    windows = np.asarray(windows)
+    labels = np.asarray(labels)
+
+    np.save(os.path.join("data", "Windows", "windows.npy"), windows)
+    np.save(os.path.join("data", "Windows", "labels.npy"), labels)
+    return windows, labels
+
+
+def find_zeros(patch_size, n_ones, n_fours):
+    n_zeros = n_ones if n_fours == 0 else (n_ones + n_fours)//2
+    zero_patches = list()
+    labels = list()
+
+    while len(zero_patches) < n_zeros:
+        rdn_image_nbr = random.randint(1, 134)
+        image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(rdn_image_nbr)), dtype='uint8')
+        image = image.reshape((1024, 1024))
+        rnd_x = random.randint(0, 1024 - patch_size)
+        rnd_y = random.randint(0, 1024 - patch_size)
+        candidate = image[rnd_y:rnd_y + patch_size, rnd_x:rnd_x + patch_size]
+
+        with open(os.path.join("data", "GroundTruths", "img{}.lxyr".format(rdn_image_nbr))) as gt:
+            too_close = False
+
+            for line in gt:
+                line_array = line.split(" ")
+                mid_point = (rnd_x + patch_size // 2, rnd_y + patch_size // 2)
+                volcan_point = (int(float(line_array[1])), int(float(line_array[2])))
+                diagonal = np.sqrt(2 * (patch_size//2)**2)
+                if distance.euclidean(mid_point, volcan_point) < float(line_array[3]) + diagonal:
+                    too_close = True
+                    break
+            if not too_close:
+                zero_patches.append(candidate.ravel())
+                labels.append(0)
+
+    return np.asarray(zero_patches), np.asarray(labels)
 
 
 if __name__ == "__main__":
 
     # PARAMETERS ========
-
     # Patches:
     patch_size = 16
     padding_size = 20
-    combine = False
+    combine = True
     balance = False
     use_hog = False
+    windows = False
+    with_zeros = True
 
     # Other:
     mnist = False
     do_plot = False
     n_splits = 10
-
     # ===================
 
-    create_patches(patch_size, padding_size, combine)
+    #X, y = create_windows()
+    #data = train_test_split(X, y, test_size=0.33, shuffle=True)
+    #model_lda, acc, prec, f = lda(*data, do_plot)
+    #print("Acc:", acc)
+    #print("Prec:", prec)
+    #print("F-Score:", f)
+
+    create_patches(patch_size, padding_size, combine, with_zeros)
 
     if mnist:
         data = sklearn.datasets.load_digits()
         X, y = data.data, data.target
     else:
-        X, y = load_data(balance)
+        X, y = load_data(balance, windows)
         X = create_hog_patches(X) if use_hog else X
-
 
     kf = KFold(n_splits=n_splits, shuffle=True)
     global_acc = 0
@@ -259,8 +366,3 @@ if __name__ == "__main__":
     print("Acc:", global_acc)
     print("Prec:", global_prec)
     print("F-Score:", global_f)
-
-    #data = train_test_split(patches, labels, test_size=0.33, shuffle=True)
-    #adaboost(patches, labels)
-
-
