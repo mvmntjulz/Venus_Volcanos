@@ -28,20 +28,20 @@ HOG_PATCHES = list()
 
 
 def plot(ax, X, y):
-    ax.plot(X[y == 4, 0], X[y == 4, 1], "ko", alpha=0.4)
-    ax.plot(X[y == 3, 0], X[y == 3, 1], "go", alpha=0.4)
+    #ax.plot(X[y == 4, 0], X[y == 4, 1], "ko", alpha=0.4)
+    #ax.plot(X[y == 3, 0], X[y == 3, 1], "go", alpha=0.4)
     #ax.plot(X[y == 2, 0], X[y == 2, 1], "bo", alpha=0.4)
-    ax.plot(X[y == 1, 0], X[y == 1, 1], "ro", alpha=0.4)
+
+    ax.plot(X[y == 0, 0], X[y == 0, 1], "ro", alpha=0.4)
+    ax.plot(X[y == 1, 0], X[y == 1, 1], "bo", alpha=0.4)
 
 
+# TODO: PCA and LDA/SVM afterwards
 def pca_knn(trn_X, tst_X, trn_y, tst_y, do_plot=False):
     pca = sklearn.decomposition.PCA(n_components=2)
     pca.fit(trn_X)
 
     trn_X_2 = pca.transform(trn_X)
-    if do_plot:
-        plot(plt, trn_X_2, trn_y)
-        plt.show()
 
     # Training phase
     knn = sklearn.neighbors.KNeighborsClassifier(n_neighbors=10)
@@ -49,30 +49,44 @@ def pca_knn(trn_X, tst_X, trn_y, tst_y, do_plot=False):
 
     # Testing phase
     tst_X_2 = pca.transform(tst_X)
-    if do_plot:
-        plt.figure()
-        plt.title("Train")
-        plot(plt, trn_X_2, trn_y)
 
-        plt.figure()
-        plt.title("Test - Ground-Truth")
-        plot(plt, tst_X_2, tst_y)
+
+    if do_plot:
+        fig = plt.figure()
+        ax1 = fig.add_subplot(131)
+        ax1.set_title("Train")
+        plot(ax1, trn_X_2, trn_y)
+
+        ax2 = fig.add_subplot(132)
+        ax2.set_title("Test - GT after pca transform")
+        plot(ax2, tst_X_2, tst_y)
 
     y_pred = knn.predict(pca.transform(tst_X))
 
     if do_plot:
-        plot(plt, tst_X_2, y_pred)
+        ax3 = fig.add_subplot(133)
+        ax3.set_title("Post-Predict with KNN")
+        plot(ax3, tst_X_2, y_pred)
+
+        plt.tight_layout()
         plt.show()
+
 
     print("PCA:")
     print(sklearn.metrics.confusion_matrix(tst_y, y_pred))
     print(sklearn.metrics.accuracy_score(tst_y, y_pred))
 
     acc = sklearn.metrics.accuracy_score(tst_y, y_pred)
-    prec = sklearn.metrics.precision_score(tst_y, y_pred, average='weighted')
-    f = sklearn.metrics.f1_score(tst_y, y_pred, average='weighted')
+    if len(set(LABELS)) == 2:
+        prec = sklearn.metrics.precision_score(tst_y, y_pred, average='binary')
+        rec = sklearn.metrics.recall_score(tst_y, y_pred, average='binary')
+        f = sklearn.metrics.f1_score(tst_y, y_pred, average='binary')
+    else:
+        prec = sklearn.metrics.precision_score(tst_y, y_pred, average='weighted')
+        rec = sklearn.metrics.recall_score(tst_y, y_pred, average='weighted')
+        f = sklearn.metrics.f1_score(tst_y, y_pred, average='weighted')
 
-    return pca, acc, prec, f
+    return pca, knn, acc, prec, rec, f
 
 
 def lda(trn_X, tst_X, trn_y, tst_y, do_plot=False, patch_size=None):
@@ -154,10 +168,7 @@ def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False, 
     new_image[padding_size:-padding_size, padding_size:-padding_size] = image
     image = new_image
     if manipulate_image:
-        image = skimage.exposure.adjust_gamma(image, 2)
-    #image = skimage.exposure.equalize_adapthist(image)
-    #plt.imshow(image)
-    #plt.show()
+        image = skimage.exposure.adjust_gamma(image, 5)
 
     with open(path_to_ground_truth) as lines:
         for line in lines:
@@ -169,15 +180,12 @@ def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False, 
             global LABELS
             global PATCHES
             if combine:
-                if line_array[0] == '1' or line_array[0] == '2':
+                if line_array[0] == '1' or line_array[0] == '2' or line_array[0] == '3':
                     LABELS.append(1)
                     PATCHES.append(patch.ravel())
-                #else:
-                    #LABELS.append(int(line[0]))
-                    #LABELS.append(3)
-                    #PATCHES.append(patch.ravel())
             else:
                 LABELS.append(int(line[0]))
+                PATCHES.append(patch.ravel())
 
 
 def create_patches(patch_size=16, padding_size= 20, combine=False, with_zeros=False, manipulate_image=False):
@@ -190,7 +198,7 @@ def create_patches(patch_size=16, padding_size= 20, combine=False, with_zeros=Fa
     PATCHES = np.asarray(PATCHES)
 
     if with_zeros:
-        zero_patches, zero_labels = find_zeros(patch_size, len(LABELS[LABELS == 1]), len(LABELS[LABELS == 4]))
+        zero_patches, zero_labels = find_zeros(patch_size)
         PATCHES = np.vstack((PATCHES, zero_patches))
         LABELS = np.concatenate((LABELS, zero_labels))
 
@@ -201,17 +209,6 @@ def create_patches(patch_size=16, padding_size= 20, combine=False, with_zeros=Fa
 
     np.save(os.path.join("data", "Patches", "patches.npy"), PATCHES)
     np.save(os.path.join("data", "Patches", "labels.npy"), LABELS)
-
-
-def create_hog_patches(X):
-    hog_fv = list()
-    size = int(np.sqrt(X.shape[1]))
-    for x in X:
-        x_q = x.reshape(size, size)
-        fv, hi = hog(x_q, visualise=True, orientations=9, pixels_per_cell=(4, 4), cells_per_block=(4, 4))
-        hog_fv.append(fv)
-
-    return np.asarray(hog_fv)
 
 
 def get_label_for_coords(x, y, window_size, gt, image=None):
@@ -239,59 +236,14 @@ def get_label_for_coords(x, y, window_size, gt, image=None):
         return 0
 
 
-def create_windows():
-    windows = list()
-    windows_0 = list()
-    labels = list()
-    gt_list = list()
+def find_zeros(patch_size):
+    distinct_labels = set(LABELS)
+    n_zeros = len(LABELS) // len(distinct_labels)
 
-    for i in range(134):
-        path_to_image = os.path.join("data", "Images", "img{}.sdt".format(i+1))
-        path_to_ground_truth = os.path.join("data", "GroundTruths", "img{}.lxyr".format(i+1))
-        image = np.fromfile(path_to_image, dtype='uint8')
-        image = image.reshape((1024, 1024))
-        window_size = 32
-
-        x_range = range(0, image.shape[1] - window_size + 1, window_size//2)
-        y_range = range(0, image.shape[0] - window_size + 1, window_size//2)
-
-        print(i)
-        print(len(windows), len(windows_0))
-
-        with open(path_to_ground_truth) as gt:
-            for line in gt:
-                gt_list.append(line)
-
-        for y_coord in y_range:
-            for x_coord in x_range:
-                window = image[y_coord:y_coord + window_size, x_coord:x_coord + window_size]
-                label = get_label_for_coords(x_coord, y_coord, window_size, gt_list, image)
-                if label > 0:
-                    labels.append(label)
-                    windows.append(window.ravel())
-                if label == 0:
-                    windows_0.append(window.ravel())
-
-    for i in range(len(labels)):
-        rand_index = random.randint(0, len(windows_0))
-
-        windows.append(windows_0[rand_index])
-        labels.append(0)
-
-    windows = np.asarray(windows)
-    labels = np.asarray(labels)
-
-    np.save(os.path.join("data", "Windows", "windows.npy"), windows)
-    np.save(os.path.join("data", "Windows", "labels.npy"), labels)
-    return windows, labels
-
-
-def find_zeros(patch_size, n_ones, n_fours):
-    n_zeros = n_ones if n_fours == 0 else (n_ones + n_fours)//2
     zero_patches = list()
     labels = list()
 
-    while len(zero_patches) < n_zeros*7:
+    while len(zero_patches) < n_zeros:
         rdn_image_nbr = random.randint(1, 134)
         image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(rdn_image_nbr)), dtype='uint8')
         image = image.reshape((1024, 1024))
@@ -307,7 +259,7 @@ def find_zeros(patch_size, n_ones, n_fours):
                 mid_point = (rnd_x + patch_size // 2, rnd_y + patch_size // 2)
                 volcan_point = (int(float(line_array[1])), int(float(line_array[2])))
                 diagonal = np.sqrt(2 * (patch_size//2)**2)
-                if distance.euclidean(mid_point, volcan_point) < float(line_array[3]) + diagonal:
+                if distance.euclidean(mid_point, volcan_point) < float(line_array[3]) + diagonal and line_array[0] == '1' or line_array[0] == '2':
                     too_close = True
                     break
             if not too_close:
@@ -317,48 +269,27 @@ def find_zeros(patch_size, n_ones, n_fours):
     return np.asarray(zero_patches), np.asarray(labels)
 
 
-def sliding_window(lda, patch_size, image=None, image_nbr=None):
-    if image is None:
-        image_nbr = random.randint(1, 134)
-        image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(image_nbr)), dtype='uint8')
-        image = image.reshape((1024, 1024))
-
-    fig, ax = plt.subplots(1)
-    ax.imshow(image, cmap='gray')
-
-    x_range = range(0, image.shape[1] - patch_size + 1, patch_size // 2)
-    y_range = range(0, image.shape[0] - patch_size + 1, patch_size // 2)
-
-    for y_coord in y_range:
-        for x_coord in x_range:
-            candidate = image[y_coord:y_coord + patch_size, x_coord:x_coord + patch_size].reshape((1, patch_size * patch_size))
-            label = lda.predict(candidate)
-            if label[0] == 1:
-                rect = patches.Rectangle((x_coord, y_coord), patch_size, patch_size, linewidth=1, edgecolor='r', facecolor='none')
-                ax.add_patch(rect)
-            #else:
-                #rect = patches.Rectangle((x_coord, y_coord), 32, 32, linewidth=1, edgecolor='k', facecolor='none')
-                #ax.add_patch(rect)
-    draw_rect_gt(image_nbr, ax)
-    plt.show()
-
-
 def sliding_window_vote(model_array, image, image_nbr, patch_size):
     fig, ax = plt.subplots(1)
-    ax.imshow(image, cmap='gray')
+    ax.imshow(image)
     x_range = range(0, image.shape[1] - patch_size + 1, patch_size // 2)
     y_range = range(0, image.shape[0] - patch_size + 1, patch_size // 2)
 
     for y_coord in y_range:
         for x_coord in x_range:
-            candidate = image[y_coord:y_coord + patch_size, x_coord:x_coord + patch_size].reshape((1, patch_size * patch_size))
+            candidate = image[y_coord:y_coord + patch_size, x_coord:x_coord + patch_size].reshape(1, patch_size * patch_size)
 
+            #plt.figure()
+            #plt.imshow(image[y_coord:y_coord + patch_size, x_coord:x_coord + patch_size])
             votes = list()
             for model in model_array:
-                votes.append(model.predict(candidate)[0])
+                if type(model) == tuple:
+                    votes.append((model[1].predict(model[0].transform(candidate))[0]))
+                else:
+                    votes.append(model.predict(candidate)[0])
 
             label = max(set(votes), key=votes.count)
-            if label == 1 and votes.count(1)/len(model_array) >= 0.5:
+            if label == 1 and votes.count(1)/len(model_array) >= 0.8:
                 rect = patches.Rectangle((x_coord, y_coord), patch_size, patch_size, linewidth=1, edgecolor='r', facecolor='none')
                 ax.add_patch(rect)
 
@@ -371,8 +302,8 @@ def draw_rect_gt(image_nbr, ax):
         print("Image used: {}".format(image_nbr))
         for line in gt:
             line_array = line.split(" ")
-            if int(line_array[0]) == 1 or int(line_array[0] == 2):
-                color = 'y'
+            if int(line_array[0]) == 1 or int(line_array[0]) == 2 or int(line_array[0]) == 3:
+                color = 'w'
             else:
                 color = 'orange'
 
@@ -387,43 +318,28 @@ if __name__ == "__main__":
 
     # PARAMETERS ========
     # Patches:
-    patch_size = 64
+    patch_size = 32
     padding_size = 100
     combine = True
     balance = False
     use_hog = False
     windows = False
     with_zeros = True
-    manipulate_image = True
+    manipulate_image = False
 
     # Other:
-    mnist = False
     do_plot = False
-    n_splits = 5
+    n_splits = 10
     # ===================
 
-    #X, y = create_windows()
-    #data = train_test_split(X, y, test_size=0.33, shuffle=True)
-    #model_lda, acc, prec, f = lda(*data, do_plot)
-    #print("Acc:", acc)
-    #print("Prec:", prec)
-    #print("F-Score:", f)
-
     create_patches(patch_size, padding_size, combine, with_zeros, manipulate_image)
-
-    if mnist:
-        data = sklearn.datasets.load_digits()
-        X, y = data.data, data.target
-    else:
-        X, y = load_data(balance, windows)
-        X = create_hog_patches(X) if use_hog else X
+    X, y = load_data(balance, windows)
 
     kf = KFold(n_splits=n_splits, shuffle=True)
     global_acc = 0
     global_prec = 0
     global_rec = 0
     global_f = 0
-
     model_array = list()
 
     for train_index, test_index in kf.split(X):
@@ -431,11 +347,14 @@ if __name__ == "__main__":
         y_train, y_test = y[train_index], y[test_index]
 
         data = X_train, X_test, y_train, y_test
+
         #LDA
-        model_lda, acc, prec, rec, f = lda(*data, do_plot, patch_size)
-        model_array.append(model_lda)
+        #model_lda, acc, prec, rec, f = lda(*data, do_plot, patch_size)
+        #model_array.append(model_lda)
+
         #PCA
-        #model_pca, acc, prec, f = pca_knn(*data, do_plot)
+        model_pca, model_knn, acc, prec, rec, f = pca_knn(*data, do_plot)
+        model_array.append((model_pca, model_knn))
 
         global_acc += acc
         global_prec += prec
@@ -453,11 +372,15 @@ if __name__ == "__main__":
     print("F-Score:", global_f)
 
     #Sliding Window
-    image_nbr = 1
-    test_image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(image_nbr)), dtype='uint8')
-    test_image = test_image.reshape((1024, 1024))
-    if manipulate_image:
-        test_image = skimage.exposure.adjust_gamma(test_image, 2)
-    sliding_window_vote(model_array, test_image, image_nbr, patch_size)
+    while True:
+        i = random.randint(1, 134)
+        print(i)
+        image_nbr = 66
+        test_image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(image_nbr)), dtype='uint8')
+        test_image = test_image.reshape((1024, 1024))
+        if manipulate_image:
+            test_image = skimage.exposure.adjust_gamma(test_image, 5)
+
+        sliding_window_vote(model_array, test_image, image_nbr, patch_size)
 
 
