@@ -8,14 +8,18 @@ from skimage.feature import hog
 from sklearn.model_selection import train_test_split
 from matplotlib import pylab as plt
 from skimage import exposure
+import skimage.morphology
 import scipy.misc
 from sklearn.model_selection import cross_val_score
 from sklearn.ensemble import AdaBoostClassifier
 import sklearn.cluster
 from sklearn.model_selection import KFold
 import copy
+import skimage.filters
 import random
 from scipy.spatial import distance
+import matplotlib.patches as patches
+from PIL import Image
 
 WINDOWS = list()
 PATCHES = list()
@@ -71,7 +75,7 @@ def pca_knn(trn_X, tst_X, trn_y, tst_y, do_plot=False):
     return pca, acc, prec, f
 
 
-def lda(trn_X, tst_X, trn_y, tst_y, do_plot=False):
+def lda(trn_X, tst_X, trn_y, tst_y, do_plot=False, patch_size=None):
     lda = sklearn.discriminant_analysis.LinearDiscriminantAnalysis()
     lda.fit(trn_X, trn_y)
 
@@ -103,11 +107,12 @@ def lda(trn_X, tst_X, trn_y, tst_y, do_plot=False):
     np.set_printoptions(precision=2)
 
     acc = sklearn.metrics.accuracy_score(tst_y, y_pred)
-    prec = sklearn.metrics.precision_score(tst_y, y_pred, average='weighted')
-    f = sklearn.metrics.f1_score(tst_y, y_pred, average='weighted')
+    prec = sklearn.metrics.precision_score(tst_y, y_pred, average='binary')
+    rec = sklearn.metrics.recall_score(tst_y, y_pred, average='binary')
+    f = sklearn.metrics.f1_score(tst_y, y_pred, average='binary')
     print(cm)
 
-    return lda, acc, prec, f
+    return lda, acc, prec, rec, f
 
 
 def reshape_data(X, y):
@@ -138,7 +143,7 @@ def load_data(balance=False, win=False):
     return patches, labels
 
 
-def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False):
+def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False, manipulate_image=False):
     path_to_image = os.path.join("data", "Images", "img{}.sdt".format(i))
     path_to_ground_truth = os.path.join("data", "GroundTruths", "img{}.lxyr".format(i))
 
@@ -148,7 +153,11 @@ def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False):
     new_image = np.zeros((1024 + 2 * padding_size, 1024 + 2 * padding_size), dtype='uint8')
     new_image[padding_size:-padding_size, padding_size:-padding_size] = image
     image = new_image
-    #image = exposure.equalize_adapthist(image, clip_limit=0.03)
+    if manipulate_image:
+        image = skimage.exposure.adjust_gamma(image, 2)
+    #image = skimage.exposure.equalize_adapthist(image)
+    #plt.imshow(image)
+    #plt.show()
 
     with open(path_to_ground_truth) as lines:
         for line in lines:
@@ -156,13 +165,11 @@ def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False):
             x_pos = int(float(line_array[1])) + padding_size - patch_size//2
             y_pos = int(float(line_array[2])) + padding_size - patch_size//2
             patch = image[y_pos:y_pos + patch_size, x_pos:x_pos + patch_size]
-            #plt.imshow(patch)
-            #plt.show()
 
             global LABELS
             global PATCHES
             if combine:
-                if line_array[0] == '1' or line_array[0] == '2' or line_array[0] == '3':
+                if line_array[0] == '1' or line_array[0] == '2':
                     LABELS.append(1)
                     PATCHES.append(patch.ravel())
                 #else:
@@ -173,9 +180,9 @@ def create_patches_for_image(i, patch_size=16, padding_size= 20, combine=False):
                 LABELS.append(int(line[0]))
 
 
-def create_patches(patch_size=16, padding_size= 20, combine=False, with_zeros=False):
+def create_patches(patch_size=16, padding_size= 20, combine=False, with_zeros=False, manipulate_image=False):
     for image in range(134):
-        create_patches_for_image(image+1, patch_size, padding_size, combine)
+        create_patches_for_image(image+1, patch_size, padding_size, combine, manipulate_image)
 
     global LABELS
     LABELS = np.asarray(LABELS)
@@ -186,6 +193,11 @@ def create_patches(patch_size=16, padding_size= 20, combine=False, with_zeros=Fa
         zero_patches, zero_labels = find_zeros(patch_size, len(LABELS[LABELS == 1]), len(LABELS[LABELS == 4]))
         PATCHES = np.vstack((PATCHES, zero_patches))
         LABELS = np.concatenate((LABELS, zero_labels))
+
+    zipped = list(zip(PATCHES, LABELS))
+    random.shuffle(zipped)
+
+    PATCHES, LABELS  = zip(*zipped)
 
     np.save(os.path.join("data", "Patches", "patches.npy"), PATCHES)
     np.save(os.path.join("data", "Patches", "labels.npy"), LABELS)
@@ -233,7 +245,7 @@ def create_windows():
     labels = list()
     gt_list = list()
 
-    for i in range(10):
+    for i in range(134):
         path_to_image = os.path.join("data", "Images", "img{}.sdt".format(i+1))
         path_to_ground_truth = os.path.join("data", "GroundTruths", "img{}.lxyr".format(i+1))
         image = np.fromfile(path_to_image, dtype='uint8')
@@ -279,7 +291,7 @@ def find_zeros(patch_size, n_ones, n_fours):
     zero_patches = list()
     labels = list()
 
-    while len(zero_patches) < n_zeros:
+    while len(zero_patches) < n_zeros*7:
         rdn_image_nbr = random.randint(1, 134)
         image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(rdn_image_nbr)), dtype='uint8')
         image = image.reshape((1024, 1024))
@@ -305,22 +317,89 @@ def find_zeros(patch_size, n_ones, n_fours):
     return np.asarray(zero_patches), np.asarray(labels)
 
 
+def sliding_window(lda, patch_size, image=None, image_nbr=None):
+    if image is None:
+        image_nbr = random.randint(1, 134)
+        image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(image_nbr)), dtype='uint8')
+        image = image.reshape((1024, 1024))
+
+    fig, ax = plt.subplots(1)
+    ax.imshow(image, cmap='gray')
+
+    x_range = range(0, image.shape[1] - patch_size + 1, patch_size // 2)
+    y_range = range(0, image.shape[0] - patch_size + 1, patch_size // 2)
+
+    for y_coord in y_range:
+        for x_coord in x_range:
+            candidate = image[y_coord:y_coord + patch_size, x_coord:x_coord + patch_size].reshape((1, patch_size * patch_size))
+            label = lda.predict(candidate)
+            if label[0] == 1:
+                rect = patches.Rectangle((x_coord, y_coord), patch_size, patch_size, linewidth=1, edgecolor='r', facecolor='none')
+                ax.add_patch(rect)
+            #else:
+                #rect = patches.Rectangle((x_coord, y_coord), 32, 32, linewidth=1, edgecolor='k', facecolor='none')
+                #ax.add_patch(rect)
+    draw_rect_gt(image_nbr, ax)
+    plt.show()
+
+
+def sliding_window_vote(model_array, image, image_nbr, patch_size):
+    fig, ax = plt.subplots(1)
+    ax.imshow(image, cmap='gray')
+    x_range = range(0, image.shape[1] - patch_size + 1, patch_size // 2)
+    y_range = range(0, image.shape[0] - patch_size + 1, patch_size // 2)
+
+    for y_coord in y_range:
+        for x_coord in x_range:
+            candidate = image[y_coord:y_coord + patch_size, x_coord:x_coord + patch_size].reshape((1, patch_size * patch_size))
+
+            votes = list()
+            for model in model_array:
+                votes.append(model.predict(candidate)[0])
+
+            label = max(set(votes), key=votes.count)
+            if label == 1 and votes.count(1)/len(model_array) >= 0.5:
+                rect = patches.Rectangle((x_coord, y_coord), patch_size, patch_size, linewidth=1, edgecolor='r', facecolor='none')
+                ax.add_patch(rect)
+
+    draw_rect_gt(image_nbr, ax)
+    plt.show()
+
+
+def draw_rect_gt(image_nbr, ax):
+    with open(os.path.join("data", "GroundTruths", "img{}.lxyr".format(image_nbr))) as gt:
+        print("Image used: {}".format(image_nbr))
+        for line in gt:
+            line_array = line.split(" ")
+            if int(line_array[0]) == 1 or int(line_array[0] == 2):
+                color = 'y'
+            else:
+                color = 'orange'
+
+            x_mid = int(float(line_array[1])) - int(float(line_array[3]))
+            y_mid = int(float(line_array[2])) - int(float(line_array[3]))
+            vulcano_radius = int(float(line_array[3]))
+            rect = patches.Rectangle((x_mid, y_mid), 2*vulcano_radius, 2*vulcano_radius, linewidth=1, edgecolor=color, facecolor='none')
+            ax.add_patch(rect)
+
+
 if __name__ == "__main__":
 
     # PARAMETERS ========
     # Patches:
-    patch_size = 16
-    padding_size = 20
+    patch_size = 64
+    padding_size = 100
     combine = True
     balance = False
     use_hog = False
     windows = False
     with_zeros = True
+    manipulate_image = True
 
     # Other:
     mnist = False
     do_plot = False
-    n_splits = 10
+    n_splits = 5
     # ===================
 
     #X, y = create_windows()
@@ -330,7 +409,7 @@ if __name__ == "__main__":
     #print("Prec:", prec)
     #print("F-Score:", f)
 
-    create_patches(patch_size, padding_size, combine, with_zeros)
+    create_patches(patch_size, padding_size, combine, with_zeros, manipulate_image)
 
     if mnist:
         data = sklearn.datasets.load_digits()
@@ -342,7 +421,10 @@ if __name__ == "__main__":
     kf = KFold(n_splits=n_splits, shuffle=True)
     global_acc = 0
     global_prec = 0
+    global_rec = 0
     global_f = 0
+
+    model_array = list()
 
     for train_index, test_index in kf.split(X):
         X_train, X_test = X[train_index], X[test_index]
@@ -350,19 +432,32 @@ if __name__ == "__main__":
 
         data = X_train, X_test, y_train, y_test
         #LDA
-        model_lda, acc, prec, f = lda(*data, do_plot)
-
+        model_lda, acc, prec, rec, f = lda(*data, do_plot, patch_size)
+        model_array.append(model_lda)
         #PCA
         #model_pca, acc, prec, f = pca_knn(*data, do_plot)
 
         global_acc += acc
         global_prec += prec
+        global_rec += rec
         global_f += f
 
     global_acc /= kf.get_n_splits(X)
     global_prec /= kf.get_n_splits(X)
+    global_rec /= kf.get_n_splits(X)
     global_f /= kf.get_n_splits(X)
 
     print("Acc:", global_acc)
     print("Prec:", global_prec)
+    print("Rec:", global_rec)
     print("F-Score:", global_f)
+
+    #Sliding Window
+    image_nbr = 1
+    test_image = np.fromfile(os.path.join("data", "Images", "img{}.sdt".format(image_nbr)), dtype='uint8')
+    test_image = test_image.reshape((1024, 1024))
+    if manipulate_image:
+        test_image = skimage.exposure.adjust_gamma(test_image, 2)
+    sliding_window_vote(model_array, test_image, image_nbr, patch_size)
+
+
