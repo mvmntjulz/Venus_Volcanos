@@ -9,22 +9,15 @@ import sklearn.decomposition
 import sklearn.discriminant_analysis
 import sklearn.metrics
 import sklearn.datasets
-from skimage.feature import hog
-from sklearn.model_selection import train_test_split
 from matplotlib import pylab as plt, colors
-from skimage import exposure
 import skimage.morphology
 import scipy.misc
-from sklearn.model_selection import cross_val_score
-from sklearn.ensemble import AdaBoostClassifier
 import sklearn.cluster
 from sklearn.model_selection import KFold
-import copy
 import skimage.filters
 import random
 from scipy.spatial import distance
 import matplotlib.patches as patches
-from PIL import Image
 import sklearn.gaussian_process
 import sklearn.neural_network
 
@@ -169,6 +162,7 @@ def plot_classes_grid(patch_size=32):
         ax.set_axis_off()
     plt.show()
 
+
 def create_decision_boundry(X, clf):
     nx, ny = 200, 100
     x_min, x_max = X[:, 0].min() - .5, X[:, 0].max() + .5
@@ -179,6 +173,7 @@ def create_decision_boundry(X, clf):
     Z = clf.predict_proba(np.c_[xx.ravel(), yy.ravel()])
     Z = Z[:, 1].reshape(xx.shape)
     return Z, xx, yy
+
 
 def reshape_data(X, y):
     rows = X.shape[0]//225
@@ -452,9 +447,7 @@ if __name__ == "__main__":
     #plot_classes_grid()
 
     X, y = load_data(balance, windows)
-
     model_array = do_kfold(X, y, n_splits)
-
 
     #Sliding Window for image/s
     sliding_window_for_images(model_array, patch_size, voting_threshold, example_image_nbr, use_example_image)
